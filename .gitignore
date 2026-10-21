@@ -13,6 +13,9 @@ __pycache__/
 .ruff_cache/
 dist/
 build/
+# WizardStudioVoice: icones e arquivos do instalador precisam ir para o GitHub
+!electron/build/
+electron/build/uv/
 .playwright-mcp
 
 # ─────────────────────────────────────────────────────────────────────────
