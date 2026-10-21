@@ -80,7 +80,7 @@ assert.equal(
     {
       'microsoft-store': 'MicrosoftStore',
       'mac-app-store': 'MacAppStore',
-    }[DISTRIBUTION_TARGET] ?? 'Electron'
+    }[DISTRIBUTION_TARGET] ?? 'Setup' // WizardStudioVoice
   }-\${version}-\${os}-\${arch}.\${ext}`,
   'Store packaging is distinct without renaming direct-download artifacts',
 );

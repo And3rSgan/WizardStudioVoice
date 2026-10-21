@@ -54,6 +54,19 @@ Na tela **Clonar**, a chave **Gerar por partes** (ligada por padrão) divide o r
 - Se você mudar o texto e gerar de novo, só as partes que mudaram são refeitas.
 - As partes não entram no histórico de tomadas, só o arquivo final entra.
 
+## Gerar o instalador .exe para outras pessoas
+
+O instalador é gerado pelo GitHub (GitHub Actions), não no seu PC.
+
+1. Dê dois cliques em **`PUBLICAR-NO-GITHUB.cmd`** (envia suas alterações para o GitHub).
+2. Abra https://github.com/And3rSgan/WizardStudioVoice/actions → **Gerar instalador Windows** → **Run workflow**.
+3. Em uns 15–25 minutos o arquivo `WizardStudioVoice-Setup-<versão>-win-x64.exe` aparece em
+   **Releases** (https://github.com/And3rSgan/WizardStudioVoice/releases). Esse link pode ser compartilhado.
+
+Quem instalar: na primeira abertura o app baixa o motor de voz (alguns GB). O instalador não é
+assinado, então o Windows pode avisar "O Windows protegeu o computador" → **Mais informações** →
+**Executar assim mesmo**. A versão instalada não se atualiza sozinha pela versão oficial do VoiceStudio.
+
 ## Licença
 
 Baseado no VoiceStudio © Palash Debnath e colaboradores, licença GNU AGPL-3.0 (ver `LICENSE` e `LICENSE-NOTICE.md`).

@@ -12,6 +12,14 @@ const targets = {
   linux: { x64: 'x86_64-unknown-linux-gnu', arm64: 'aarch64-unknown-linux-gnu' },
 };
 
+function hasCargo() {
+  return new Promise((done) => {
+    const probe = spawn('cargo', ['--version'], { stdio: 'ignore', windowsHide: true });
+    probe.once('error', () => done(false));
+    probe.once('close', (code) => done(code === 0));
+  });
+}
+
 export function nativeTarget(platform, arch) {
   const target = targets[platform]?.[arch];
   if (!target) throw new Error(`Unsupported native helper target: ${platform}/${arch}`);
@@ -20,6 +28,12 @@ export function nativeTarget(platform, arch) {
 
 /** Build for the actual installer architecture, then copy before signing. */
 export async function packageNativeHelper(context) {
+  // WizardStudioVoice: o helper nativo (atalhos globais de ditado e pastas
+  // monitoradas) e opcional. Sem Rust/cargo instalado, o instalador sai sem ele.
+  if (process.env.WSV_SKIP_NATIVE_HELPER === '1' || !(await hasCargo())) {
+    console.warn('[WizardStudioVoice] cargo não encontrado: instalador sem o helper nativo (atalhos globais).');
+    return;
+  }
   const platform = context.electronPlatformName;
   const target = nativeTarget(platform, Arch[context.arch]);
   const targetDir = join(root, 'target');

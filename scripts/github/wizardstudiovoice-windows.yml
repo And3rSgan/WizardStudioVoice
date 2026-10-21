@@ -1,0 +1,90 @@
+name: Gerar instalador Windows
+
+# WizardStudioVoice: gera o instalador .exe do Windows e publica numa Release
+# do GitHub (link publico para compartilhar).
+#   - Manual: aba Actions → "Gerar instalador Windows" → Run workflow
+#   - Automatico: ao enviar uma tag de versao (ex.: git tag v0.5.8 && git push --tags)
+on:
+  workflow_dispatch:
+  push:
+    tags: ['v*']
+
+permissions:
+  contents: write
+
+concurrency:
+  group: wizardstudiovoice-windows-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  windows:
+    runs-on: windows-2022
+    timeout-minutes: 60
+    defaults:
+      run:
+        shell: bash
+    env:
+      VOICESTUDIO_RUST_TARGET: x86_64-pc-windows-msvc
+      VOICESTUDIO_UPDATE_CHANNEL: electron-stable-win32-x64
+      CSC_IDENTITY_AUTO_DISCOVERY: 'false'
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
+      - uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020 # v4.4.0
+        with:
+          node-version: '22'
+      - uses: oven-sh/setup-bun@0c5077e51419868618aeaa5fe8019c62421857d6 # v2.2.0
+        with:
+          bun-version: '1.4.2'
+      # Rust compila o helper nativo (atalhos globais de ditado).
+      - uses: dtolnay/rust-toolchain@6bed0761d98439e5a578e2877258200ad565ba87 # stable
+        with:
+          targets: x86_64-pc-windows-msvc
+      - uses: Swatinem/rust-cache@6323deb102c322ba6fcbdcafc7e3dddab59af2b6 # v2.9.2
+        with:
+          workspaces: native/desktop-bridge -> target
+          key: wizardstudiovoice-win-x64
+      - uses: astral-sh/setup-uv@d0cc045d04ccac9d8b7881df0226f9e82c39688e # v6.8.0
+        with:
+          version: '0.12.13'
+          enable-cache: false
+
+      - name: Incluir o uv no instalador
+        run: |
+          mkdir -p electron/build/uv
+          cp "$(where.exe uv | head -n 1 | tr -d '\r')" electron/build/uv/uv-x86_64-pc-windows-msvc.exe
+
+      - name: Instalar dependencias
+        run: bun install --frozen-lockfile
+
+      - name: Compilar o app
+        run: |
+          bun run --cwd electron build:web
+          bun run --cwd electron build
+          node electron/tests/packaging-contract.mjs
+
+      - name: Gerar o instalador .exe
+        working-directory: electron
+        run: bun x electron-builder --config electron-builder.config.mjs --win nsis --x64 --publish never
+
+      - name: Guardar o instalador (aba Actions)
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
+        with:
+          name: WizardStudioVoice-Windows
+          retention-days: 30
+          if-no-files-found: error
+          path: electron/release/WizardStudioVoice-Setup-*.exe
+
+      - name: Publicar na pagina de Releases
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          VERSION=$(node -p "require('./package.json').version")
+          if [ "${{ github.ref_type }}" = "tag" ]; then
+            TAG="${{ github.ref_name }}"
+          else
+            TAG="v${VERSION}-build${{ github.run_number }}"
+          fi
+          gh release create "$TAG" electron/release/WizardStudioVoice-Setup-*.exe \
+            --target "$GITHUB_SHA" \
+            --title "WizardStudioVoice $TAG" \
+            --notes "Instalador do WizardStudioVoice para Windows (64 bits). Baixe o arquivo .exe abaixo e execute. Na primeira abertura o app baixa o motor de voz (alguns GB). Como o instalador não é assinado digitalmente, o Windows pode mostrar 'O Windows protegeu o computador': clique em 'Mais informações' e depois em 'Executar assim mesmo'. Baseado no VoiceStudio (AGPL-3.0); o código-fonte completo desta versão está neste repositório."

@@ -21,7 +21,7 @@ const artifactLabel =
   {
     'microsoft-store': 'MicrosoftStore',
     'mac-app-store': 'MacAppStore',
-  }[DISTRIBUTION_TARGET] ?? 'Electron';
+  }[DISTRIBUTION_TARGET] ?? 'Setup';
 const artifactPrefix = `${PRODUCT_NAME.replace(/[^A-Za-z0-9]+/g, '-')}-${artifactLabel}`;
 // Stable is the only Electron update feed: there is no `preview` release to
 // point at. Packaging rehearsals from main are stamped stable too; they are
@@ -192,6 +192,11 @@ export default {
     oneClick: false,
     allowToChangeInstallationDirectory: true,
     perMachine: false,
+    // WizardStudioVoice: atalhos com o nome do app.
+    createDesktopShortcut: 'always',
+    createStartMenuShortcut: true,
+    shortcutName: PRODUCT_NAME,
+    uninstallDisplayName: PRODUCT_NAME,
   },
   mac: {
     icon: 'build/icons/icon.icns',

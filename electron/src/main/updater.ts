@@ -387,7 +387,10 @@ export class DesktopUpdater {
   }
 
   private updatesSupported(): boolean {
-    return applicationUpdatesSupported(app.isPackaged, this.distribution);
+    // WizardStudioVoice: nunca atualiza pelo GitHub do VoiceStudio original
+    // (isso substituiria esta versao personalizada pela oficial).
+    void applicationUpdatesSupported;
+    return false;
   }
 
   private patch(value: Partial<UpdateState>): void {
