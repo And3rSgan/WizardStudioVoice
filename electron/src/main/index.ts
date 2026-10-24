@@ -3,6 +3,7 @@ import { installWatchFolders } from './watch-folders';
 import { installNativeCapture } from './native-capture';
 import { isTrustedRenderer } from './trusted-renderer';
 import { dirname, join } from 'node:path';
+import { existsSync, writeFileSync } from 'node:fs';
 import { randomUUID } from 'node:crypto';
 import { fileURLToPath } from 'node:url';
 import { app, BrowserWindow, ipcMain, Menu, nativeImage, session, shell, Tray } from 'electron';
@@ -55,6 +56,26 @@ let closeWatch: (() => void) | null = null;
 let supervisor: BackendSupervisor | null = null;
 let quitting = false;
 let tray: Tray | null = null;
+// WizardStudioVoice: aberto pelo "Iniciar com o Windows" → comeca escondido na bandeja.
+const startHidden = process.argv.includes('--hidden');
+let firstWindow = true;
+
+/** Avisa (uma unica vez) que o X so esconde a janela e o app segue rodando. */
+function announceHiddenToTray(): void {
+  const marker = join(app.getPath('userData'), 'close-to-tray-notified');
+  if (existsSync(marker) || !tray || process.platform !== 'win32') return;
+  try {
+    tray.displayBalloon({
+      iconType: 'info',
+      title: PRODUCT_NAME,
+      content:
+        'Continua rodando aqui na bandeja, com a API ligada. Para fechar de vez: botão direito no ícone → Sair.',
+    });
+    writeFileSync(marker, new Date().toISOString());
+  } catch {
+    /* aviso opcional */
+  }
+}
 let closeCapture: (() => void) | null = null;
 let closeDevProxy: (() => Promise<void>) | null = null;
 let closeUpdates: (() => void) | null = null;
@@ -154,10 +175,28 @@ function createWindow(): BrowserWindow {
     },
   });
 
-  win.on('ready-to-show', () => activateLiveWindow(win));
+  const hideOnStart = startHidden && firstWindow;
+  firstWindow = false;
+  win.on('ready-to-show', () => {
+    if (!hideOnStart) activateLiveWindow(win);
+  });
+  // Desligar/reiniciar o Windows encerra o app de verdade (sem travar o desligamento).
+  win.on('query-session-end', () => {
+    quitting = true;
+  });
+  win.on('session-end', () => {
+    quitting = true;
+  });
   win.on('close', (event) => {
     if (quitting) return;
     event.preventDefault();
+    // WizardStudioVoice: o X so esconde; o app e a API seguem rodando na bandeja.
+    // Para sair de verdade: menu do icone da bandeja → Sair.
+    if (process.platform !== 'darwin' && tray && !tray.isDestroyed()) {
+      win.hide();
+      announceHiddenToTray();
+      return;
+    }
     if (process.platform === 'darwin') {
       observeMainProcessTask(
         flushRendererPersistence().finally(() => {

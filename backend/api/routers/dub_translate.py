@@ -1,5 +1,6 @@
 import json
 import os
+import threading
 import time
 import asyncio
 import logging
@@ -236,6 +237,40 @@ def _translation_output_error(text: object) -> str | None:
 _nllb_model = None
 _nllb_tokenizer = None
 _nllb_device = None
+# WizardStudioVoice: o modelo era descarregado enquanto outra traducao ainda o
+# usava ('NoneType' object has no attribute 'src_lang') e recarregado do disco
+# a cada pedido. Agora o uso e protegido por trava e a descarga so acontece
+# quando nenhuma traducao NLLB esta em andamento.
+_nllb_lock = threading.Lock()
+_nllb_pending = 0
+
+# WizardStudioVoice: tradutores gratuitos (Google/MyMemory) bloqueiam acima de
+# ~5 pedidos/s. Os pedidos agora saem num ritmo controlado e, se o servico
+# pedir para esperar, todos esperam juntos antes de tentar de novo.
+_FREE_API_INTERVAL = 0.3
+_free_api_lock = threading.Lock()
+_free_api_next = 0.0
+
+
+def _free_api_wait() -> None:
+    global _free_api_next
+    with _free_api_lock:
+        now = time.monotonic()
+        wait = _free_api_next - now
+        _free_api_next = max(now, _free_api_next) + _FREE_API_INTERVAL
+    if wait > 0:
+        time.sleep(wait)
+
+
+def _free_api_backoff(seconds: float) -> None:
+    global _free_api_next
+    with _free_api_lock:
+        _free_api_next = max(_free_api_next, time.monotonic() + seconds)
+
+
+def _is_rate_limited(error: BaseException) -> bool:
+    text = f"{type(error).__name__} {error}".lower()
+    return "too many requests" in text or "toomanyrequests" in text or " 429" in text
 _NLLB_BATCH_SIZE_ENV = "OMNIVOICE_NLLB_BATCH_SIZE"
 _NLLB_MAX_BATCH_SIZE = 32
 
@@ -373,12 +408,19 @@ def _unload_nllb():
     global _nllb_device, _nllb_model, _nllb_tokenizer
     import gc
     from services.model_manager import release_device_cache
-    device = _nllb_device
-    _nllb_model = None
-    _nllb_tokenizer = None
-    _nllb_device = None
-    gc.collect()
-    release_device_cache(device=device)
+    # Em uso por outra traducao: nao arranca o modelo dela (fica para depois).
+    if not _nllb_lock.acquire(blocking=False):
+        logger.info("NLLB em uso por outra tradução; descarga adiada")
+        return
+    try:
+        device = _nllb_device
+        _nllb_model = None
+        _nllb_tokenizer = None
+        _nllb_device = None
+        gc.collect()
+        release_device_cache(device=device)
+    finally:
+        _nllb_lock.release()
 
 
 def _should_unload_nllb() -> bool:
@@ -568,8 +610,17 @@ async def dub_translate(req: TranslateRequest):
 
                 return [results_by_index[index] for index in range(len(req.segments))]
 
-            translated = await loop.run_in_executor(_gpu_pool, _translate_nllb)
-            if _should_unload_nllb():
+            def _translate_nllb_locked():
+                with _nllb_lock:
+                    return _translate_nllb()
+
+            global _nllb_pending
+            _nllb_pending += 1
+            try:
+                translated = await loop.run_in_executor(_gpu_pool, _translate_nllb_locked)
+            finally:
+                _nllb_pending -= 1
+            if _nllb_pending == 0 and _should_unload_nllb():
                 _unload_nllb()
             # Cinematic/Autofit refine + rate-ratio badges must run for NLLB too
             # (previously this returned before _maybe_cinematic, so a Cinematic
@@ -946,9 +997,13 @@ async def dub_translate(req: TranslateRequest):
             if not seg.text or not seg.text.strip():
                 return {"id": seg.id, "text": seg.text}
             last_err = None
-            # Try: (src_arg, tgt) → retry once → fall back to (auto, tgt).
-            for attempt, src in enumerate([src_arg, src_arg, "auto"]):
+            free_api = provider not in PAID_PROVIDERS
+            # Try: (src_arg, tgt) → retries → fall back to (auto, tgt).
+            sources = [src_arg] * 5 + ["auto"] if free_api else [src_arg, src_arg, "auto"]
+            for attempt, src in enumerate(sources):
                 try:
+                    if free_api:
+                        _free_api_wait()
                     out = _build_translator(src, seg_lc).translate(seg.text)
                     output_error = _translation_output_error(out)
                     if output_error is None:
@@ -960,7 +1015,13 @@ async def dub_translate(req: TranslateRequest):
                         "translate attempt %d %s->%s (provider=%s) failed: %s",
                         attempt + 1, src, seg_lc, provider, e,
                     )
-                    time.sleep(0.25 * (attempt + 1))
+                    if free_api and _is_rate_limited(e):
+                        # O servico pediu calma: todos os pedidos esperam.
+                        pause = min(30.0, 3.0 * (2 ** attempt))
+                        _free_api_backoff(pause)
+                        time.sleep(pause)
+                    else:
+                        time.sleep(0.25 * (attempt + 1))
             logger.error("translate %s -> %s gave up (provider=%s): %s", src_arg, seg_lc, provider, last_err)
             # Scrub before it reaches the UI — DeepL/Microsoft errors can echo
             # the API key (same class as the OpenAI user_id leak).

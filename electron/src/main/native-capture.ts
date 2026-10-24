@@ -115,6 +115,21 @@ export function installNativeCapture(
           },
         },
         { label: labels.settings, click: () => showMain('/settings') },
+        // WizardStudioVoice: abre escondido na bandeja quando o Windows inicia.
+        ...(process.platform === 'win32' && app.isPackaged
+          ? [
+              { type: 'separator' as const },
+              {
+                label: 'Iniciar com o Windows',
+                type: 'checkbox' as const,
+                checked: app.getLoginItemSettings({ args: ['--hidden'] }).openAtLogin,
+                click: (item: Electron.MenuItem) => {
+                  app.setLoginItemSettings({ openAtLogin: item.checked, args: ['--hidden'] });
+                  refreshTrayMenu();
+                },
+              },
+            ]
+          : []),
         { type: 'separator' },
         { label: labels.exit, click: () => app.quit() },
       ]),
